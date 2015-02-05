@@ -68,16 +68,34 @@ func newRedisDial() redis.Conn {
 type Authorizer struct {
 	ConsumerKey string
 	RedirectURL string
+	Session     sessions.Session
 }
 
-func (a Authorizer) Prepare() (string, *pocketAuth.RequestToken, error) {
+const sessionKeyAuthCode = "auth_code"
+
+func (a Authorizer) Prepare() (string, error) {
 	reqToken, err := pocketAuth.ObtainRequestToken(a.ConsumerKey, a.RedirectURL)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 
 	authURL := pocketAuth.GenerateAuthorizationURL(reqToken, a.RedirectURL)
-	return authURL, reqToken, nil
+
+	a.Session.Set(sessionKeyAuthCode, reqToken.Code)
+
+	return authURL, nil
+}
+
+func (a Authorizer) Authorize() (*pocketAuth.Authorization, error) {
+	code := a.Session.Get(sessionKeyAuthCode)
+	if code == nil {
+		return nil, fmt.Errorf("session %q not set", sessionKeyAuthCode)
+	}
+
+	a.Session.Delete(sessionKeyAuthCode)
+
+	reqToken := &pocketAuth.RequestToken{Code: code.(string)}
+	return pocketAuth.ObtainAccessToken(a.ConsumerKey, reqToken)
 }
 
 var html = `<!DOCTYPE html>
@@ -101,11 +119,11 @@ button {
   <pre>= Pocket Expose
 
 Pocket Expose is a web application that provides a URL exposing your <a href="https://getpocket.com/">Pocket</a> list.
-{{if .User)}}
+{{if .User}}
 - Your name: *<strong>{{.User.Auth.Username}}</strong>*
 - Your list: <a href="/list/{{.User.Key}}.txt">/list/{{.User.Key}}.txt</a>
 
-<form action="/update" method="POST"><input type="hidden" name="_csrf" value="{{.CSRFToken}}">You can <button name="refresh">refresh</button> your URL, or <button name="erase">erase</button> your information entirely.</form>
+<form action="/update" method="POST"><input type="hidden" name="_csrf" value="{{.CSRFToken}}">You can <button name="refresh" value="✓">refresh</button> your URL, or <button name="erase">erase</button> your information entirely.</form>
 	{{else}}
 <a href="/auth">Log in</a> with Pocket
 	{{end}}
@@ -144,6 +162,7 @@ func main() {
 		Secret:     config.CSRFSecret,
 		SessionKey: "username",
 	}))
+	m.Use(render.Renderer())
 	m.Use(martini.Recovery())
 
 	m.Get("/", func(w http.ResponseWriter, sess sessions.Session, x csrf.CSRF) string {
@@ -172,30 +191,23 @@ func main() {
 		authr := Authorizer{
 			ConsumerKey: config.ConsumerKey,
 			RedirectURL: redirectURL,
+			Session:     sess,
 		}
-		authURL, reqToken, err := authr.Prepare()
-
+		authURL, err := authr.Prepare()
 		if err != nil {
 			panic(err)
 		}
-
-		sess.Set("auth_code", reqToken.Code)
 
 		w.Header().Set("Location", authURL)
 		w.WriteHeader(302)
 	})
 
 	m.Get("/auth/callback", func(w http.ResponseWriter, sess sessions.Session) {
-		code := sess.Get("auth_code")
-		if code == nil {
-			w.WriteHeader(400)
-			return
+		authr := Authorizer{
+			ConsumerKey: config.ConsumerKey,
+			Session:     sess,
 		}
-
-		sess.Delete("auth_code")
-
-		reqToken := &pocketAuth.RequestToken{Code: code.(string)}
-		token, err := pocketAuth.ObtainAccessToken(config.ConsumerKey, reqToken)
+		token, err := authr.Authorize()
 		if err != nil {
 			panic(err)
 		}
@@ -218,7 +230,7 @@ func main() {
 
 		username, err := redis.String(rd.Do("GET", "keys:"+key))
 		if err != nil {
-			log.Print(err)
+			panic(err)
 		}
 
 		_, u, err := loadUser(rd, username)
@@ -249,14 +261,16 @@ func main() {
 		}
 	})
 
-	m.Post("/update", csrf.Validate, func(r render.Render, params martini.Params, sess sessions.Session) {
+	m.Post("/update", csrf.Validate, func(r render.Render, req *http.Request, params martini.Params, sess sessions.Session) {
 		rd, u, err := loadUser(nil, sess.Get("username").(string)) // may panic
 		if u == nil {
 			panic(err)
 		}
 
-		if _, ok := params["refresh"]; ok {
-			err := refresh(rd, &u.Auth, false)
+		log.Print(req.FormValue("refresh"))
+
+		if req.FormValue("refresh") != "" {
+			err := refresh(rd, &u.Auth, true)
 			if err != nil {
 				panic(err)
 			}
