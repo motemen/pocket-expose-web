@@ -9,6 +9,9 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
+
+	"golang.org/x/tools/blog/atom"
 
 	"github.com/go-martini/martini"
 	"github.com/kelseyhightower/envconfig"
@@ -87,12 +90,23 @@ func (a Authorizer) Authorize() (*pocketAuth.Authorization, error) {
 	return pocketAuth.ObtainAccessToken(a.ConsumerKey, reqToken)
 }
 
-func withUser(c martini.Context, sess sessions.Session, repo *repository) {
+func userSession(c martini.Context, sess sessions.Session, repo *repository) {
 	var u *user
 
 	username := sess.Get("username")
 	if username != nil {
 		u, _ = repo.UserFromName(username.(string))
+	}
+
+	c.Map(u)
+}
+
+func userExposed(c martini.Context, params martini.Params, repo *repository) {
+	key := params["key"]
+
+	u, err := repo.UserFromExposeKey(key)
+	if err != nil {
+		panic(err)
 	}
 
 	c.Map(u)
@@ -117,7 +131,7 @@ func main() {
 		c.Next()
 	})
 
-	m.Get("/", withUser, func(w http.ResponseWriter, u *user, x csrf.CSRF) {
+	m.Get("/", userSession, func(w http.ResponseWriter, u *user, x csrf.CSRF) {
 		err := indexTmpl.Execute(w, viewContext{u, x.GetToken()})
 		if err != nil {
 			panic(err)
@@ -162,13 +176,7 @@ func main() {
 		r.Redirect("/")
 	})
 
-	m.Get("/list/:key.txt", func(w http.ResponseWriter, repo *repository, params martini.Params) {
-		key := params["key"]
-
-		u, err := repo.UserFromExposeKey(key)
-		if err != nil {
-			panic(err)
-		}
+	m.Get("/list/:key.txt", userExposed, func(w http.ResponseWriter, u *user) {
 		if u == nil {
 			w.WriteHeader(404)
 			return
@@ -176,7 +184,9 @@ func main() {
 
 		pocket := api.NewClient(config.ConsumerKey, u.Auth.AccessToken)
 
-		opts := &api.RetrieveOption{}
+		opts := &api.RetrieveOption{
+			DetailType: api.DetailTypeSimple,
+		}
 		res, err := pocket.Retrieve(opts)
 		if err != nil {
 			panic(err)
@@ -197,7 +207,75 @@ func main() {
 		}
 	})
 
-	m.Post("/refresh", csrf.Validate, withUser, func(r render.Render, u *user, repo *repository) {
+	m.Get("/list/:key.atom", userExposed, func(req *http.Request, r render.Render, u *user) {
+		if u == nil {
+			r.Status(404)
+			return
+		}
+
+		pocket := api.NewClient(config.ConsumerKey, u.Auth.AccessToken)
+
+		opts := &api.RetrieveOption{
+			Count:      20,
+			Sort:       api.SortNewest,
+			DetailType: api.DetailTypeComplete,
+		}
+		res, err := pocket.Retrieve(opts)
+		if err != nil {
+			panic(err)
+		}
+
+		items := make([]api.Item, 0, len(res.List))
+		for _, item := range res.List {
+			items = append(items, item)
+		}
+
+		sort.Sort(bySortID(items))
+
+		feed := atom.Feed{
+			Title: fmt.Sprintf("%s's Pocket list", u.Auth.Username),
+			Entry: make([]*atom.Entry, 0, len(items)),
+			ID:    fmt.Sprintf("http://%s%s", req.Host, req.URL),
+		}
+		if len(items) > 0 {
+			feed.Updated = atom.Time(time.Time(items[0].TimeUpdated))
+		} else {
+			feed.Updated = atom.Time(time.Now())
+		}
+
+		for _, item := range items {
+			entry := &atom.Entry{
+				Title: item.Title(),
+				Link: []atom.Link{
+					{Href: item.URL(), Rel: "alternate"},
+				},
+				Summary: &atom.Text{
+					Type: "text",
+					Body: item.Excerpt,
+				},
+				Published: atom.Time(time.Time(item.TimeAdded)),
+				Updated:   atom.Time(time.Time(item.TimeUpdated)),
+				ID:        item.URL(),
+			}
+			for _, a := range item.Authors {
+				author := &atom.Person{}
+				if name, ok := a["name"]; ok {
+					author.Name, _ = name.(string)
+				}
+				if url, ok := a["url"]; ok {
+					author.URI, _ = url.(string)
+				}
+				entry.Author = author
+				break
+			}
+
+			feed.Entry = append(feed.Entry, entry)
+		}
+
+		r.XML(200, feed)
+	})
+
+	m.Post("/refresh", csrf.Validate, userSession, func(r render.Render, u *user, repo *repository) {
 		if u == nil {
 			r.Status(403)
 		}
@@ -210,7 +288,7 @@ func main() {
 		r.Redirect("/")
 	})
 
-	m.Post("/erase", csrf.Validate, withUser, func(r render.Render, u *user, repo *repository, sess sessions.Session) {
+	m.Post("/erase", csrf.Validate, userSession, func(r render.Render, u *user, repo *repository, sess sessions.Session) {
 		if u == nil {
 			r.Status(403)
 		}

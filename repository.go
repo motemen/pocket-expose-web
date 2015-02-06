@@ -92,7 +92,7 @@ func newRedisDial() redis.Conn {
 	if err != nil {
 		panic(err)
 	}
-	return redis.NewLoggingConn(conn, log.New(os.Stderr, "redis", log.LstdFlags), "rd")
+	return redis.NewLoggingConn(conn, log.New(os.Stderr, "[repository]", log.LstdFlags), "")
 }
 
 func redisJSON(reply interface{}, err error) decoder {

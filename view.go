@@ -8,7 +8,7 @@ var indexHTML = `<!DOCTYPE html>
 <html>
   <head>
     <title>Pocket Expose</title>
-	<style>
+    <style>
 form {
   display: inline;
 }
@@ -16,27 +16,33 @@ button {
   font-family: monospace;
   border: none;
   font: inherit;
-  background-color: silver;
+  background-color: #DDD;
   padding: 0;
   cursor: pointer;
 }
-	</style>
+    </style>
   </head>
   <body>
-  <pre>= Pocket Expose
+  <pre>Pocket Expose
+=============
 
 Pocket Expose is a web application that provides a URL exposing your <a href="https://getpocket.com/">Pocket</a> list.
 {{if .User}}
 - Your name: *<strong>{{.User.Auth.Username}}</strong>*
-- Your list: <a href="/list/{{.User.ExposeKey}}.txt">/list/{{.User.ExposeKey}}.txt</a>
+- Your list: [<a href="/list/{{.User.ExposeKey}}.txt">Text</a>] [<a href="/list/{{.User.ExposeKey}}.atom">Atom</a>]
+
+Action
+------
 
 You can <form action="/refresh" method="POST"><input type="hidden" name="_csrf" value="{{.CSRFToken}}"><button>refresh</button></form> your URL, or <form action="/erase" method="POST"><input type="hidden" name="_csrf" value="{{.CSRFToken}}"><button>erase</button></form> your information entirely.</form>
-	{{else}}
+{{else}}
 <a href="/auth">Log in</a> with Pocket
-	{{end}}
--- 
-<address>By <a href="https://twitter.com/motemen">@motemen</a></address>
-	</pre>
+{{end}}
+Author
+------
+
+<address><a href="https://twitter.com/motemen">@motemen</a></address>
+    </pre>
   </body>
 </html>
 `
