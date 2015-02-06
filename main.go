@@ -180,10 +180,17 @@ func main() {
 			panic(err)
 		}
 
-		u := &user{
-			Auth: *token,
-		}
 		sess.Set("username", token.Username)
+
+		u, err := repo.UserFromName(token.Username)
+		if err != nil {
+			panic(err)
+		}
+		if u == nil {
+			u = &user{
+				Auth: *token,
+			}
+		}
 
 		if err := refresh(repo, u, false); err != nil {
 			panic(err)
