@@ -1,20 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/sha1"
-	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 
-	"github.com/garyburd/redigo/redis"
 	"github.com/go-martini/martini"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/martini-contrib/csrf"
@@ -36,8 +31,8 @@ var config struct {
 }
 
 type user struct {
-	Auth pocketAuth.Authorization `json:"auth"`
-	Key  string                   `json:"key"`
+	Auth      pocketAuth.Authorization `json:"auth"`
+	ExposeKey string                   `json:"key"`
 }
 
 func init() {
@@ -55,14 +50,8 @@ func init() {
 	}
 
 	config.redisHost = redisURL.Host
-}
 
-func newRedisDial() redis.Conn {
-	conn, err := redis.Dial("tcp", config.redisHost)
-	if err != nil {
-		panic(err)
-	}
-	return redis.NewLoggingConn(conn, log.New(os.Stderr, "redis", log.LstdFlags), "rd")
+	log.Printf("config: %+v", config)
 }
 
 type Authorizer struct {
@@ -98,66 +87,21 @@ func (a Authorizer) Authorize() (*pocketAuth.Authorization, error) {
 	return pocketAuth.ObtainAccessToken(a.ConsumerKey, reqToken)
 }
 
-var html = `<!DOCTYPE html>
-<html>
-  <head>
-    <title>Pocket Expose</title>
-	<style>
-button {
-  font-family: monospace;
-  border: none;
-  font: inherit;
-  background-color: transparent;
-  color: #09F;
-  padding: 0;
-  text-decoration: underline;
-  cursor: pointer;
-}
-	</style>
-  </head>
-  <body>
-  <pre>= Pocket Expose
+func withUser(c martini.Context, sess sessions.Session, repo *repository) {
+	var u *user
 
-Pocket Expose is a web application that provides a URL exposing your <a href="https://getpocket.com/">Pocket</a> list.
-{{if .User}}
-- Your name: *<strong>{{.User.Auth.Username}}</strong>*
-- Your list: <a href="/list/{{.User.Key}}.txt">/list/{{.User.Key}}.txt</a>
-
-<form action="/update" method="POST"><input type="hidden" name="_csrf" value="{{.CSRFToken}}">You can <button name="refresh" value="✓">refresh</button> your URL, or <button name="erase">erase</button> your information entirely.</form>
-	{{else}}
-<a href="/auth">Log in</a> with Pocket
-	{{end}}
--- 
-<address><a href="https://twitter.com/motemen">@motemen</a></address>
-	</pre>
-  </body>
-</html>
-`
-var tmpl = template.Must(template.New("index").Parse(html))
-
-type templateContext struct {
-	User      *user
-	CSRFToken string
-}
-
-func loadUser(rd redis.Conn, username string) (redis.Conn, *user, error) {
-	if rd == nil {
-		rd = newRedisDial()
+	username := sess.Get("username")
+	if username != nil {
+		u, _ = repo.UserFromName(username.(string))
 	}
 
-	var u user
-	if err := redisJSON(rd.Do("GET", "users:"+username)).Decode(&u); err != nil {
-		return nil, nil, err
-	}
-
-	return rd, &u, nil
+	c.Map(u)
 }
 
 func main() {
 	m := martini.Classic()
 
-	store := sessions.NewCookieStore([]byte(config.SessionSecret))
-	m.Use(sessions.Sessions("s", store))
+	m.Use(sessions.Sessions("s", sessions.NewCookieStore([]byte(config.SessionSecret))))
 	m.Use(csrf.Generate(&csrf.Options{
 		Secret:     config.CSRFSecret,
 		SessionKey: "username",
@@ -165,27 +109,22 @@ func main() {
 	m.Use(render.Renderer())
 	m.Use(martini.Recovery())
 
-	m.Get("/", func(w http.ResponseWriter, sess sessions.Session, x csrf.CSRF) string {
-		var u *user
+	m.Use(func(c martini.Context) {
+		repo := &repository{}
+		defer repo.finish()
 
-		username := sess.Get("username")
-		if username != nil {
-			var err error
-			_, u, err = loadUser(nil, username.(string))
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, templateContext{u, x.GetToken()}); err != nil {
-			panic(err)
-		}
-
-		return buf.String()
+		c.Map(&repository{})
+		c.Next()
 	})
 
-	m.Get("/auth", func(req *http.Request, w http.ResponseWriter, sess sessions.Session) {
+	m.Get("/", withUser, func(w http.ResponseWriter, u *user, x csrf.CSRF) {
+		err := indexTmpl.Execute(w, viewContext{u, x.GetToken()})
+		if err != nil {
+			panic(err)
+		}
+	})
+
+	m.Get("/auth", func(req *http.Request, r render.Render, sess sessions.Session) {
 		redirectURL := fmt.Sprintf("http://%s/auth/callback", req.Host)
 
 		authr := Authorizer{
@@ -198,11 +137,10 @@ func main() {
 			panic(err)
 		}
 
-		w.Header().Set("Location", authURL)
-		w.WriteHeader(302)
+		r.Redirect(authURL)
 	})
 
-	m.Get("/auth/callback", func(w http.ResponseWriter, sess sessions.Session) {
+	m.Get("/auth/callback", func(r render.Render, repo *repository, sess sessions.Session) {
 		authr := Authorizer{
 			ConsumerKey: config.ConsumerKey,
 			Session:     sess,
@@ -212,30 +150,28 @@ func main() {
 			panic(err)
 		}
 
+		u := &user{
+			Auth: *token,
+		}
 		sess.Set("username", token.Username)
 
-		rd := newRedisDial()
-
-		if err := refresh(rd, token, false); err != nil {
+		if err := refresh(repo, u, false); err != nil {
 			panic(err)
 		}
 
-		w.Write([]byte("OK"))
+		r.Redirect("/")
 	})
 
-	m.Get("/list/:key.txt", func(w http.ResponseWriter, params martini.Params) {
+	m.Get("/list/:key.txt", func(w http.ResponseWriter, repo *repository, params martini.Params) {
 		key := params["key"]
 
-		rd := newRedisDial()
-
-		username, err := redis.String(rd.Do("GET", "keys:"+key))
+		u, err := repo.UserFromExposeKey(key)
 		if err != nil {
 			panic(err)
 		}
-
-		_, u, err := loadUser(rd, username)
-		if err != nil {
-			panic(err)
+		if u == nil {
+			w.WriteHeader(404)
+			return
 		}
 
 		pocket := api.NewClient(config.ConsumerKey, u.Auth.AccessToken)
@@ -261,22 +197,30 @@ func main() {
 		}
 	})
 
-	m.Post("/update", csrf.Validate, func(r render.Render, req *http.Request, params martini.Params, sess sessions.Session) {
-		rd, u, err := loadUser(nil, sess.Get("username").(string)) // may panic
+	m.Post("/refresh", csrf.Validate, withUser, func(r render.Render, u *user, repo *repository) {
 		if u == nil {
+			r.Status(403)
+		}
+
+		err := refresh(repo, u, true)
+		if err != nil {
 			panic(err)
 		}
 
-		log.Print(req.FormValue("refresh"))
+		r.Redirect("/")
+	})
 
-		if req.FormValue("refresh") != "" {
-			err := refresh(rd, &u.Auth, true)
-			if err != nil {
-				panic(err)
-			}
-		} else {
-			panic("not implemented")
+	m.Post("/erase", csrf.Validate, withUser, func(r render.Render, u *user, repo *repository, sess sessions.Session) {
+		if u == nil {
+			r.Status(403)
 		}
+
+		err := repo.EraseUser(u)
+		if err != nil {
+			panic(err)
+		}
+
+		sess.Delete("username")
 
 		r.Redirect("/")
 	})
@@ -290,62 +234,12 @@ func (s bySortID) Len() int           { return len(s) }
 func (s bySortID) Less(i, j int) bool { return s[i].SortId < s[j].SortId }
 func (s bySortID) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-func redisJSON(reply interface{}, err error) decoder {
-	b, err := redis.Bytes(reply, err)
-	if err != nil {
-		return failDecoder{err}
+func refresh(repo *repository, u *user, force bool) error {
+	if u.ExposeKey != "" && force == false {
+		return nil
 	}
 
-	r := bytes.NewReader(b)
-	return json.NewDecoder(r)
-}
-
-type decoder interface {
-	Decode(v interface{}) error
-}
-
-type failDecoder struct {
-	err error
-}
-
-func (ed failDecoder) Decode(_ interface{}) error {
-	return ed.err
-}
-
-func refresh(rd redis.Conn, token *pocketAuth.Authorization, force bool) error {
-	_, u, err := loadUser(rd, token.Username)
-
-	switch err {
-	case nil:
-		if force == false {
-			return nil
-		}
-
-	case redis.ErrNil:
-		u = &user{
-			Auth: *token,
-		}
-
-	default:
-		return err
-	}
-
-	u.Key = genKey()
-
-	userJSON, err := json.Marshal(u)
-	if err != nil {
-		return err
-	}
-
-	if _, err := rd.Do("SET", "users:"+token.Username, userJSON); err != nil {
-		return err
-	}
-
-	if _, err := rd.Do("SET", "keys:"+u.Key, u.Auth.Username); err != nil {
-		return err
-	}
-
-	return nil
+	return repo.UpdateUserExposeKey(u, genKey())
 }
 
 func genKey() string {
