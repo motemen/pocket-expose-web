@@ -15,8 +15,16 @@ type repository struct {
 
 func (repo *repository) redisConn() redis.Conn {
 	if repo.conn == nil {
-		repo.conn = newRedisDial()
+		conn := newRedisDial()
+		if config.redisPassword != "" {
+			_, err := conn.Do("AUTH", config.redisPassword)
+			if err != nil {
+				panic(err)
+			}
+		}
+		repo.conn = conn
 	}
+
 	return repo.conn
 }
 

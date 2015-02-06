@@ -31,8 +31,9 @@ var config struct {
 	SessionSecret string `envconfig:"SESSION_SECRET"`
 	CSRFSecret    string `envconfig:"CSRF_SECRET"`
 
-	redisHost string
-	urlScheme string
+	redisHost     string
+	redisPassword string
+	urlScheme     string
 }
 
 type user struct {
@@ -65,6 +66,9 @@ func init() {
 	}
 
 	config.redisHost = redisURL.Host
+	if u := redisURL.User; u != nil {
+		config.redisPassword, _ = u.Password()
+	}
 
 	log.Printf("config: %+v", config)
 }
