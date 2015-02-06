@@ -32,6 +32,7 @@ var config struct {
 	CSRFSecret    string `envconfig:"CSRF_SECRET"`
 
 	redisHost string
+	urlScheme string
 }
 
 type user struct {
@@ -44,7 +45,11 @@ func init() {
 		os.Setenv("REDIS_URL", os.Getenv("REDISTOGO_URL"))
 	}
 
-	log.Println(os.Environ())
+	config.urlScheme = "http"
+	if os.Getenv("DYNO") != "" {
+		// on heroku
+		config.urlScheme = "https"
+	}
 
 	err := envconfig.Process("", &config)
 	if err != nil {
@@ -146,7 +151,7 @@ func main() {
 	})
 
 	m.Get("/auth", func(req *http.Request, r render.Render, sess sessions.Session) {
-		redirectURL := fmt.Sprintf("http://%s/auth/callback", req.Host)
+		redirectURL := fmt.Sprintf("%s://%s/auth/callback", config.urlScheme, req.Host)
 
 		authr := Authorizer{
 			ConsumerKey: config.ConsumerKey,
@@ -242,7 +247,7 @@ func main() {
 		feed := atom.Feed{
 			Title: fmt.Sprintf("%s's Pocket list", u.Auth.Username),
 			Entry: make([]*atom.Entry, 0, len(items)),
-			ID:    fmt.Sprintf("http://%s%s", req.Host, req.URL),
+			ID:    fmt.Sprintf("%s://%s%s", config.urlScheme, req.Host, req.URL),
 		}
 		if len(items) > 0 {
 			feed.Updated = atom.Time(time.Time(items[0].TimeUpdated))
