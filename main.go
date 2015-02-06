@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,12 @@ type user struct {
 }
 
 func init() {
+	if os.Getenv("REDIS_URL") == "" {
+		os.Setenv("REDIS_URL", os.Getenv("REDISTOGO_URL"))
+	}
+
+	log.Println(os.Environ())
+
 	err := envconfig.Process("", &config)
 	if err != nil {
 		panic(err)
