@@ -1,0 +1,19 @@
+{
+  "name": "Pocket Expose Web",
+  "description": "Pocket Expose is a web application that provides a URL exposing your Pocket list.",
+  "keywords": [
+    "pocket",
+    "getpocket",
+    "feed"
+  ],
+  "addons": [
+    "redistogo:nano"
+  ],
+  "env": {
+    "BUILDPACK_URL": "https://github.com/heroku/heroku-buildpack-go.git",
+    "MARTINI_ENV": "production",
+    "POCKET_CONSUMER_KEY": "REDACTED",
+    "SESSION_SECRET": "REDACTED",
+    "CSRF_SECRET": "REDACTED"
+  }
+}
