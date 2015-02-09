@@ -256,7 +256,7 @@ func main() {
 		sort.Sort(bySortID(items))
 
 		feed := atom.Feed{
-			Title: fmt.Sprintf("%s's Pocket list", u.Auth.Username),
+			Title: "Pocket list",
 			Entry: make([]*atom.Entry, 0, len(items)),
 			ID:    fmt.Sprintf("%s://%s%s", config.urlScheme, req.Host, req.URL),
 		}
