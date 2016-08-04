@@ -1,0 +1,46 @@
+hash: 49cfd0fac96fb87e8dec7a9f7734c449e4cbd3f0987328f72b339cec82811848
+updated: 2016-08-04T19:49:17.312802028+09:00
+imports:
+- name: github.com/boj/redistore
+  version: 9d1554b400d726c7aa54b6e4a836f273b72b97f7
+- name: github.com/codegangsta/inject
+  version: 4b8172520a03fa190f427bbd284db01b459bfce7
+- name: github.com/garyburd/redigo
+  version: 785e0ca9319196b94fd61abd4c9eab5c11777377
+  subpackages:
+  - internal
+  - redis
+- name: github.com/go-martini/martini
+  version: 7d32ea3fa6590565c928b90a48178b60b96df98f
+- name: github.com/gorilla/context
+  version: 50c25fb3b2b3b3cc724e9b6ac75fb44b3bccd0da
+- name: github.com/gorilla/securecookie
+  version: 5f171f42328bdd573211bb82bdee8f259c4c61ae
+- name: github.com/gorilla/sessions
+  version: 13c86220d944600e7a6e3de6c87418896ccfbe77
+- name: github.com/kelseyhightower/envconfig
+  version: e9049346b6aae8e6ad500c5a4519ad029439d660
+- name: github.com/martini-contrib/csrf
+  version: 8b618889bcf86f41e4b5b5b718408e17b95f6da4
+- name: github.com/martini-contrib/render
+  version: b65063311fac6cbf84d3538f5715f7847e648322
+- name: github.com/martini-contrib/sessions
+  version: fa13114fbcf036dff8185d728651d85fcef772db
+- name: github.com/motemen/go-loghttp
+  version: f1552ae0d8e6d1980d67843f78b761a5fade8f67
+- name: github.com/motemen/go-pocket
+  version: 65a634e2e7754c12a39ed6bac8808f2a79c12ca7
+  subpackages:
+  - api
+  - auth
+- name: github.com/oxtoacart/bpool
+  version: 0f78ff9152c03745d1a47c9023af1b424e202c07
+- name: golang.org/x/net
+  version: 57bfaa875b96fb91b4766077f34470528d4b03e9
+  subpackages:
+  - xsrftoken
+- name: golang.org/x/tools
+  version: 9622599500adce60e13ea72b2ac73fd516d57493
+  subpackages:
+  - blog/atom
+testImports: []
